@@ -3,7 +3,7 @@
 package com.example.opensrc_better_break
 
 /**
- * 실외 전용 센서(온도, 습도) 데이터를 바탕으로 야외 휴식처의 쾌적도를 분석.
+ * 실외 전용 센서(온도, 습도) 데이터를 바탕으로 야외 휴식처의 쾌적도를 분석함.
  */
 object CongestionAnalyzer {
 
