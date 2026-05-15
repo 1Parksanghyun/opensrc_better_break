@@ -55,4 +55,8 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+// Google Maps Compose 라이브러리
+    implementation("com.google.maps.android:maps-compose:4.4.1")
+    // Google Maps SDK
+    implementation("com.google.android.gms:play-services-maps:18.2.0")
 }
