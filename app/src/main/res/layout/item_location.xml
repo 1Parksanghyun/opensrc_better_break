@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<com.google.android.material.card.MaterialCardView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+
+    android:layout_width="match_parent"
+
+    android:layout_height="140dp"
+
+    android:layout_marginBottom="8dp"
+
+    android:elevation="4dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+
+        android:layout_height="match_parent"
+
+        android:orientation="horizontal"
+
+        android:padding="12dp">
+
+        <!-- 공기질 이미지 -->
+        <ImageView
+            android:id="@+id/imgAirQuality"
+
+            android:layout_width="64dp"
+
+            android:layout_height="64dp"
+
+            android:layout_gravity="center_vertical"
+
+            android:scaleType="fitCenter"/>
+
+        <!-- 우측 정보 -->
+        <LinearLayout
+            android:layout_width="0dp"
+
+            android:layout_height="wrap_content"
+
+            android:layout_weight="1"
+
+            android:layout_marginStart="12dp"
+
+            android:layout_gravity="center_vertical"
+
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/txtName"
+
+                android:layout_width="wrap_content"
+
+                android:layout_height="wrap_content"
+
+                android:textSize="16sp"
+
+                android:textStyle="bold"/>
+
+            <TextView
+                android:id="@+id/txtDistance"
+
+                android:layout_width="wrap_content"
+
+                android:layout_height="wrap_content"
+
+                android:layout_marginTop="6dp"
+
+                android:textSize="14sp"/>
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</com.google.android.material.card.MaterialCardView>
