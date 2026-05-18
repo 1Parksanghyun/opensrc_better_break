@@ -26,10 +26,32 @@ import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.rememberCameraPositionState
+import android.util.Log
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.QuerySnapshot
+import com.google.firebase.firestore.EventListener
+import com.google.firebase.Timestamp
+
+data class SensorData(
+    val sensor: String? = "",
+    val co2: Long? = 0, // Firestore의 정수는 기본적으로 Long으로 처리하는 것이 안전합니다.
+    val temperature: Long? = 0,
+    val latitude: Double? = 0.0,
+    val longitude: Double? = 0.0,
+    val fresh: Boolean? = false,
+    val time: String? = "",
+    val savedAt: Timestamp? = null // Firestore의 Timestamp 타입
+)
 class MainActivity : ComponentActivity() {
+
+    private val db = FirebaseFirestore.getInstance()
+    private val TAG = "firebase"
+    private val sensorList = mutableListOf<SensorData>()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        load_sensordata()
         setContent {
             Opensrc_better_breakTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
@@ -58,32 +80,32 @@ class MainActivity : ComponentActivity() {
                                 .fillMaxSize()
                                 .verticalScroll(scrollState)
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(100.dp)
-                            ) {
-                                Text("휴식지")
-                            }
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(100.dp)
-                            ) {
-                                Text("휴식지")
-                            }
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(100.dp)
-                            ) {
-                                Text("휴식지")
-                            }
+                            for (i in 1..3)
+                            RestPlaceCard()
                         }
                     }
                 }
             }
         }
+    }
+
+    private fun load_sensordata() {
+        db.collection("sensor_status")
+            .addSnapshotListener(EventListener<QuerySnapshot> { value, e ->
+                if (e != null) {
+                    Log.w(TAG, "연결 실패", e)
+                    return@EventListener
+                }
+
+                if (value != null) {
+                    for (doc in value) {
+                        val sensor = doc.toObject(SensorData::class.java)
+                        sensorList.add(sensor)
+
+                        Log.d(TAG, "불러온 센서: ${sensor.sensor}, 온도: ${sensor.temperature}, CO2: ${sensor.co2}")
+                    }
+                }
+            })
     }
 }
 
@@ -100,5 +122,16 @@ fun Greeting(name: String, modifier: Modifier = Modifier) {
 fun GreetingPreview() {
     Opensrc_better_breakTheme {
         Greeting("Android")
+    }
+}
+
+@Composable
+fun RestPlaceCard() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(100.dp)
+    ) {
+        Text("휴식지")
     }
 }
