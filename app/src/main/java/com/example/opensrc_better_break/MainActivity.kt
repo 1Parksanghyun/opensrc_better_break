@@ -31,6 +31,7 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.QuerySnapshot
 import com.google.firebase.firestore.EventListener
 import com.google.firebase.Timestamp
+import androidx.compose.runtime.mutableStateListOf
 
 data class SensorData(
     val sensor: String? = "",
@@ -72,7 +73,15 @@ class MainActivity : ComponentActivity() {
                                 .fillMaxHeight(0.7f),
                             cameraPositionState = cameraPositionState
                         ) {
-                            // 이 블록 안에 Marker, Polyline 등을 추가할 수 있습니다.
+
+                            sensorList.forEach { sensor ->
+
+                                MapMarkerModule.ShowMarker(
+                                    latitude = sensor.latitude,
+                                    longitude = sensor.longitude,
+                                    title = sensor.sensor
+                                )
+                            }
                         }
 
                         Column(
@@ -81,7 +90,7 @@ class MainActivity : ComponentActivity() {
                                 .verticalScroll(scrollState)
                         ) {
                             for (i in 1..3)
-                            RestPlaceCard()
+                                RestPlaceCard()
                         }
                     }
                 }
@@ -91,21 +100,25 @@ class MainActivity : ComponentActivity() {
 
     private fun load_sensordata() {
         db.collection("sensor_status")
-            .addSnapshotListener(EventListener<QuerySnapshot> { value, e ->
+            .addSnapshotListener { value, e ->
+
                 if (e != null) {
                     Log.w(TAG, "연결 실패", e)
-                    return@EventListener
+                    return@addSnapshotListener
                 }
 
-                if (value != null) {
-                    for (doc in value) {
-                        val sensor = doc.toObject(SensorData::class.java)
-                        sensorList.add(sensor)
+                sensorList.clear()
 
-                        Log.d(TAG, "불러온 센서: ${sensor.sensor}, 온도: ${sensor.temperature}, CO2: ${sensor.co2}")
-                    }
+                value?.forEach { doc ->
+                    val sensor = doc.toObject(SensorData::class.java)
+                    sensorList.add(sensor)
+
+                    Log.d(
+                        TAG,
+                        "센서: ${sensor.sensor}, CO2: ${sensor.co2}"
+                    )
                 }
-            })
+            }
     }
 }
 

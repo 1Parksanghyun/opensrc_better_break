@@ -6,11 +6,7 @@ plugins {
 
 android {
     namespace = "com.example.opensrc_better_break"
-    compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
-    }
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.example.opensrc_better_break"
@@ -31,36 +27,51 @@ android {
             )
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+
     buildFeatures {
         compose = true
     }
 }
 
 dependencies {
+
+    // Core
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
+
+    // Compose BOM
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+
+    // Google Maps (Compose)
+    implementation("com.google.maps.android:maps-compose:4.4.1")
+
+    // Google Maps SDK
+    implementation("com.google.android.gms:play-services-maps:19.0.0")
+
+    // Firebase BOM
+    implementation(platform("com.google.firebase:firebase-bom:34.13.0"))
+
+    implementation("com.google.firebase:firebase-analytics")
+    implementation("com.google.firebase:firebase-firestore")
+
+    // Tests
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
-// Google Maps Compose 라이브러리
-    implementation("com.google.maps.android:maps-compose:8.3.0")
-    // Google Maps SDK
-    implementation("com.google.android.gms:play-services-maps:20.0.0")
-    implementation(platform("com.google.firebase:firebase-bom:34.13.0"))
-    implementation("com.google.firebase:firebase-analytics")
-    implementation("com.google.firebase:firebase-firestore")
 }
