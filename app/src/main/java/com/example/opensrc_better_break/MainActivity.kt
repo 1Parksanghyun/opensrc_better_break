@@ -32,28 +32,33 @@ import com.google.firebase.firestore.QuerySnapshot
 import com.google.firebase.firestore.EventListener
 import com.google.firebase.Timestamp
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.remember
 
 data class SensorData(
     val sensor: String? = "",
-    val co2: Long? = 0, // Firestore의 정수는 기본적으로 Long으로 처리하는 것이 안전합니다.
-    val temperature: Long? = 0,
+    val co2: Long? = 0,
+    val temperature: Double? = 0.0,
+    val humidity: Double? = 0.0,
     val latitude: Double? = 0.0,
     val longitude: Double? = 0.0,
     val fresh: Boolean? = false,
     val time: String? = "",
-    val savedAt: Timestamp? = null // Firestore의 Timestamp 타입
+    val savedAt: Timestamp? = null
 )
 class MainActivity : ComponentActivity() {
 
     private val db = FirebaseFirestore.getInstance()
     private val TAG = "firebase"
-    private val sensorList = mutableListOf<SensorData>()
+    private val sensorList = mutableStateListOf<SensorData>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         load_sensordata()
         setContent {
+            val selectedSensor = androidx.compose.runtime.remember {
+                androidx.compose.runtime.mutableStateOf<SensorData?>(null)
+            }
             Opensrc_better_breakTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     val cbnu = LatLng(36.6300, 127.4551)
@@ -79,7 +84,10 @@ class MainActivity : ComponentActivity() {
                                 MapMarkerModule.ShowMarker(
                                     latitude = sensor.latitude,
                                     longitude = sensor.longitude,
-                                    title = sensor.sensor
+                                    title = sensor.sensor,
+                                    onClick = {
+                                        selectedSensor.value = sensor
+                                    }
                                 )
                             }
                         }
@@ -89,8 +97,9 @@ class MainActivity : ComponentActivity() {
                                 .fillMaxSize()
                                 .verticalScroll(scrollState)
                         ) {
-                            for (i in 1..3)
-                                RestPlaceCard()
+                            sensorList.forEach { sensor ->
+                                RestPlaceCard(sensor)
+                            }
                         }
                     }
                 }
@@ -113,10 +122,7 @@ class MainActivity : ComponentActivity() {
                     val sensor = doc.toObject(SensorData::class.java)
                     sensorList.add(sensor)
 
-                    Log.d(
-                        TAG,
-                        "센서: ${sensor.sensor}, CO2: ${sensor.co2}"
-                    )
+                    Log.d(TAG, "센서: ${sensor.sensor}, 온도: ${sensor.temperature}, 습도: ${sensor.humidity}")
                 }
             }
     }
@@ -139,12 +145,17 @@ fun GreetingPreview() {
 }
 
 @Composable
-fun RestPlaceCard() {
+fun RestPlaceCard(sensor: SensorData) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(100.dp)
+            .border(1.dp, androidx.compose.ui.graphics.Color.Gray)
     ) {
-        Text("휴식지")
+        Column {
+            Text("센서: ${sensor.sensor}")
+            Text("온도: ${sensor.temperature}")
+            Text("CO2: ${sensor.co2}")
+        }
     }
 }
