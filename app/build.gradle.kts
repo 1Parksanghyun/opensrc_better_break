@@ -63,7 +63,7 @@ dependencies {
 
     implementation("com.google.firebase:firebase-analytics")
     implementation("com.google.firebase:firebase-firestore")
-
+    implementation("androidx.compose.material:material-icons-core")
     // Tests
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

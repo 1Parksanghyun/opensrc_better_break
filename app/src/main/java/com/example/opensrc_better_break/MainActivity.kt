@@ -1,10 +1,18 @@
 package com.example.opensrc_better_break
 
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.border
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -13,26 +21,37 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.opensrc_better_break.ui.theme.Opensrc_better_breakTheme
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
+import com.google.firebase.Timestamp
+import com.google.firebase.firestore.FirebaseFirestore
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.rememberCameraPositionState
-import android.util.Log
-import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.QuerySnapshot
-import com.google.firebase.firestore.EventListener
-import com.google.firebase.Timestamp
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.remember
 
 data class SensorData(
     val sensor: String? = "",
@@ -45,6 +64,7 @@ data class SensorData(
     val time: String? = "",
     val savedAt: Timestamp? = null
 )
+
 class MainActivity : ComponentActivity() {
 
     private val db = FirebaseFirestore.getInstance()
@@ -55,10 +75,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         load_sensordata()
+
         setContent {
-            val selectedSensor = androidx.compose.runtime.remember {
-                androidx.compose.runtime.mutableStateOf<SensorData?>(null)
-            }
+            // 🔥 선택된 센서를 기억하는 상태 변수
+            var selectedSensor by remember { mutableStateOf<SensorData?>(null) }
+
             Opensrc_better_breakTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     val cbnu = LatLng(36.6300, 127.4551)
@@ -66,39 +87,66 @@ class MainActivity : ComponentActivity() {
                     val cameraPositionState = rememberCameraPositionState {
                         position = CameraPosition.fromLatLngZoom(cbnu, 15f)
                     }
-                    Column(
+
+                    // 🔥 Box로 전체를 감싸서 지도 위에 팝업이 뜰 수 있게 만듭니다.
+                    Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(innerPadding),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                            .fillMaxSize()
+                            .padding(innerPadding)
                     ) {
-                        GoogleMap(
-                            modifier = Modifier
-                                .fillMaxWidth(0.9f)
-                                .fillMaxHeight(0.7f),
-                            cameraPositionState = cameraPositionState
+                        // [레이어 1] 지도 및 리스트
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-
-                            sensorList.forEach { sensor ->
-
-                                MapMarkerModule.ShowMarker(
-                                    latitude = sensor.latitude,
-                                    longitude = sensor.longitude,
-                                    title = sensor.sensor,
-                                    onClick = {
-                                        selectedSensor.value = sensor
+                            GoogleMap(
+                                modifier = Modifier
+                                    .fillMaxWidth(0.9f)
+                                    .fillMaxHeight(0.7f),
+                                cameraPositionState = cameraPositionState,
+                                onMapClick = { selectedSensor = null } // 지도 빈 곳 클릭 시 팝업 닫기
+                            ) {
+                                sensorList.forEach { sensor ->
+                                    // 센서 리스트 갱신 시 마커가 깜빡이는 것을 방지하기 위해 key 부여
+                                    key(sensor.sensor) {
+                                        MapMarkerModule.ShowMarker(
+                                            latitude = sensor.latitude,
+                                            longitude = sensor.longitude,
+                                            title = sensor.sensor,
+                                            onClick = {
+                                                selectedSensor = sensor // 마커 클릭 시 팝업 열기
+                                            }
+                                        )
                                     }
-                                )
+                                }
+                            }
+
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(scrollState)
+                            ) {
+                                sensorList.forEach { sensor ->
+                                    RestPlaceCard(sensor)
+                                }
                             }
                         }
 
-                        Column(
+                        // [레이어 2] 마커 클릭 시 나타나는 하단 팝업창
+                        AnimatedVisibility(
+                            visible = selectedSensor != null,
+                            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
                             modifier = Modifier
-                                .fillMaxSize()
-                                .verticalScroll(scrollState)
+                                .align(Alignment.BottomCenter)
+                                .padding(16.dp)
+                                .padding(bottom = 32.dp) // 리스트와 겹치지 않게 여백 추가
                         ) {
-                            sensorList.forEach { sensor ->
-                                RestPlaceCard(sensor)
+                            selectedSensor?.let { sensor ->
+                                SensorDetailPopup(
+                                    sensor = sensor,
+                                    onClose = { selectedSensor = null }
+                                )
                             }
                         }
                     }
@@ -110,21 +158,105 @@ class MainActivity : ComponentActivity() {
     private fun load_sensordata() {
         db.collection("sensor_status")
             .addSnapshotListener { value, e ->
-
                 if (e != null) {
                     Log.w(TAG, "연결 실패", e)
                     return@addSnapshotListener
                 }
-
                 sensorList.clear()
-
                 value?.forEach { doc ->
                     val sensor = doc.toObject(SensorData::class.java)
                     sensorList.add(sensor)
-
                     Log.d(TAG, "센서: ${sensor.sensor}, 온도: ${sensor.temperature}, 습도: ${sensor.humidity}")
                 }
             }
+    }
+}
+
+// -----------------------------------------------------
+// UI 컴포저블 모음
+// -----------------------------------------------------
+
+@Composable
+fun SensorDetailPopup(sensor: SensorData, onClose: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "📍 ${sensor.sensor ?: "알 수 없는 센서"}",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.Black,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = onClose) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "닫기",
+                        tint = Color.Gray
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "온도", fontSize = 12.sp, color = Color.Gray)
+                    Text(
+                        text = "${sensor.temperature ?: "- "}°C",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "습도", fontSize = 12.sp, color = Color.Gray)
+                    Text(
+                        text = "${sensor.humidity ?: "- "}%",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "CO2", fontSize = 12.sp, color = Color.Gray)
+                    Text(
+                        text = "${sensor.co2 ?: "- "} ppm",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if ((sensor.co2 ?: 0) > 1000) Color.Red else Color.Black
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun RestPlaceCard(sensor: SensorData) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(100.dp)
+            .border(1.dp, Color.Gray)
+            .padding(16.dp), // 내용물이 테두리에 너무 붙지 않게 패딩 추가
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text("센서: ${sensor.sensor}")
+            Text("온도: ${sensor.temperature}")
+            Text("CO2: ${sensor.co2}")
+        }
     }
 }
 
@@ -141,21 +273,5 @@ fun Greeting(name: String, modifier: Modifier = Modifier) {
 fun GreetingPreview() {
     Opensrc_better_breakTheme {
         Greeting("Android")
-    }
-}
-
-@Composable
-fun RestPlaceCard(sensor: SensorData) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(100.dp)
-            .border(1.dp, androidx.compose.ui.graphics.Color.Gray)
-    ) {
-        Column {
-            Text("센서: ${sensor.sensor}")
-            Text("온도: ${sensor.temperature}")
-            Text("CO2: ${sensor.co2}")
-        }
     }
 }
