@@ -1,46 +1,36 @@
-@file:Suppress("UNUSED") // 이 파일 전체의 '미사용' 경고 강제 미표시
+@file:Suppress("UNUSED")
 
-package com.example.opensrc_better_break // ※ 주의: 이 부분은 프로젝트의 실제 패키지명과 똑같이 맞출 것.
+package com.example.opensrc_better_break
 
-// 1. 혼잡도 상태를 명확하게 분류해두는 Enum 클래스
+// 1. 기존 혼잡도 상태 Enum 유지 (totalPoint 반환 블록과 짝을 맞추기 위함)
 enum class CongestionLevel(val title: String, val message: String, val colorCode: String) {
-    RELAXED("여유", "쾌적하고 한산한 공간입니다.", "#4CAF50"),       // 초록색
-    NORMAL("보통", "적당한 인원이 있는 공간입니다.", "#FFEB3B"),        // 노란색
-    CROWDED("혼잡", "다소 붐빕니다. 다른 휴식처를 권장합니다.", "#FF9800"),  // 주황색
-    VERY_CROWDED("매우 혼잡", "공기가 탁하고 혼잡합니다. 피하세요.", "#F44336") // 빨간색
+    RELAXED("쾌적", "쾌적하고 한산한 공간입니다.", "#4CAF50"),
+    NORMAL("보통", "적당한 환경의 공간입니다.", "#FFEB3B"),
+    CROWDED("불쾌", "다른 휴식처를 권장합니다.", "#FF9800"),
+    VERY_CROWDED("매우 불쾌", "매우 불쾌한 곳 입니다. 피하세요.", "#F44336")
 }
 
-// 2. 혼잡도 계산기 객체
+// 2. 불쾌지수 기반 분석기로 업데이트된 CongestionAnalyzer [cite: 51, 52]
 object CongestionAnalyzer {
 
     /**
-     * @param currentCo2 현재 CO2 수치
-     * @param baseCo2 평상시 기준 CO2 수치
-     * @param bleCount 1분간 스캔된 블루투스 기기 수
-     * @return CongestionLevel (혼잡도 상태 객체)
+     * @param temp DB에서 가져온 야외 온도 (C) [cite: 52]
+     * @param humidity DB에서 가져온 야외 습도 (%) [cite: 52]
      */
-    fun calculate(currentCo2: Int, baseCo2: Int, bleCount: Int): CongestionLevel {
+    fun analyze(temp: Double, humidity: Double): CongestionLevel {
 
-        // 1. CO2 증가량 계산
-        val co2Spike = currentCo2 - baseCo2
+        // 기상청 표준 불쾌지수(DI) 계산 [cite: 53]
+        val di = 1.8 * temp - 0.55 * (1.0 - humidity / 100.0) * (1.8 * temp - 26.0) + 32.0
 
-        // 2. CO2 가중치 포인트
-        val co2Point = when {
-            co2Spike >= 300 -> 2 // 300 이상 급증하면 위험
-            co2Spike >= 100 -> 1 // 100 이상 증가면 주의
-            else -> 0
+        // 불쾌지수를 totalPoint 로 매핑 (요청하신 반환 블록을 위해 포인트 부여)
+        val totalPoint = when {
+            di >= 83 -> 4 // 83 이상: 매우 불쾌 (else 조건으로 VERY_CROWDED 매핑)
+            di >= 80 -> 3 // 80 이상: 불쾌 (CROWDED 매핑) [cite: 53]
+            di >= 75 -> 1 // 75 이상: 보통 (1 또는 2 이므로 NORMAL 매핑) [cite: 53]
+            else -> 0     // 75 미만: 쾌적 (RELAXED 매핑) [cite: 54]
         }
 
-        // 3. BLE 기기 가중치 포인트
-        val blePoint = when {
-            bleCount >= 15 -> 2 // 15대 이상 스캔되면 밀집
-            bleCount >= 6 -> 1  // 6대 이상이면 보통
-            else -> 0
-        }
-
-        // 4. 합산 및 최종 판정
-        val totalPoint = co2Point + blePoint
-
+        // 🔥 요청하신 기존 반환 블록 완벽 유지 🔥
         return when (totalPoint) {
             0 -> CongestionLevel.RELAXED
             1, 2 -> CongestionLevel.NORMAL
@@ -48,4 +38,45 @@ object CongestionAnalyzer {
             else -> CongestionLevel.VERY_CROWDED
         }
     }
+}
+
+// -----------------------------------------------------
+// 3. 함께 주신 정렬(Sort) 기능 및 데이터 클래스 연동 업데이트 [cite: 55]
+// -----------------------------------------------------
+
+// 휴식처 데이터를 담을 데이터 클래스 (Status 대신 CongestionLevel 사용) [cite: 55]
+data class RestArea(
+    val name: String,
+    val distance: Double,
+    val comfortStatus: CongestionLevel,
+    val diValue: Int
+)
+
+// 정렬을 위한 점수 계산 헬퍼 함수 [cite: 56]
+private fun getComfortScore(status: CongestionLevel): Int {
+    return when (status) {
+        CongestionLevel.RELAXED -> 4
+        CongestionLevel.NORMAL -> 3
+        CongestionLevel.CROWDED -> 2
+        CongestionLevel.VERY_CROWDED -> 1
+    }
+}
+
+// 거리 우선 정렬 함수 [cite: 56]
+// (1순위: 거리 가까운 순 -> 2순위: 쾌적도 좋은 순 -> 3순위: 불쾌지수 낮은 순) [cite: 56]
+fun sortRestAreasByDistance(restAreas: List<RestArea>): List<RestArea> {
+    return restAreas.sortedWith(
+        compareBy<RestArea> { it.distance }
+            .thenByDescending { getComfortScore(it.comfortStatus) } // [cite: 56]
+            .thenBy { it.diValue } // [cite: 57]
+    )
+}
+
+// 쾌적도 우선 정렬 함수 [cite: 57]
+fun sortRestAreasByComfort(restAreas: List<RestArea>): List<RestArea> {
+    return restAreas.sortedWith(
+        compareByDescending<RestArea> { getComfortScore(it.comfortStatus) }
+            .thenBy { it.distance } // [cite: 57]
+            .thenBy { it.diValue }  // [cite: 57]
+    )
 }

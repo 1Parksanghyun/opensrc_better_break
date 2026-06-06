@@ -124,29 +124,35 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
-                            // ... (위쪽 코드 생략, GoogleMap 블록 끝난 직후 부분) ...
-
+                            // ... (위쪽 코드 생략) ...
                             Column(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .verticalScroll(scrollState)
                             ) {
-                                // 1. 혼잡도 레벨을 기준으로 센서 리스트 정렬 (오름차순)
-                                val sortedSensors = sensorList.sortedBy { sensor ->
-                                    // 안전하게 데이터 가져오기 (이전 단계에서 SensorData에 추가한 변수 활용)
-                                    val currentCo2 = sensor.co2?.toInt() ?: 0
-                                    val baseCo2 = sensor.baseCo2?.toInt() ?: 400
-                                    val bleCount = sensor.bleCount ?: 0
+                                // 1. "pws 01"과 "pws 02" 센서 제외하고, 혼잡도 레벨 기준으로 정렬
+                                val displaySensors = sensorList
+                                    .filter { sensor ->
+                                        // 센서 이름이 "pws 01"이 아니고 "pws 02"도 아닌 것만 필터링
+                                        sensor.sensor != "pws 01" && sensor.sensor != "pws 02"
+                                    }
+                                    .sortedBy { sensor ->
+                                        // 🔥 수정된 부분: CO2 대신 온도와 습도를 가져옵니다.
+                                        val temp = sensor.temperature ?: 0.0
+                                        val humidity = sensor.humidity ?: 0.0
 
-                                    // calculate()가 반환하는 Enum(RELAXED, NORMAL...)의 순번(0, 1, 2, 3)을 기준으로 정렬
-                                    CongestionAnalyzer.calculate(currentCo2, baseCo2, bleCount).ordinal
-                                }
+                                        // 🔥 수정된 부분: calculate 대신 새로운 analyze 함수를 호출합니다.
+                                        CongestionAnalyzer.analyze(temp, humidity).ordinal
+                                    }
 
-                                // 2. 정렬된 리스트를 바탕으로 RestPlaceCard 배치
-                                sortedSensors.forEach { sensor ->
+                                // 2. 필터링 및 정렬이 완료된 리스트를 바탕으로 RestPlaceCard 배치
+                                displaySensors.forEach { sensor ->
                                     RestPlaceCard(sensor)
                                 }
                             }
+// ... (아래쪽 코드 생략) ...
+
+// ... (아래쪽 코드 생략) ...
 
                         }
 
@@ -262,26 +268,30 @@ fun SensorDetailPopup(sensor: SensorData, onClose: () -> Unit) {
 
 @Composable
 fun RestPlaceCard(sensor: SensorData) {
-    // 1. 필요한 데이터를 안전하게 가져오기 (null 처리)
-    val currentCo2 = sensor.co2?.toInt() ?: 0
-    val baseCo2 = sensor.baseCo2?.toInt() ?: 400 // 기본 기준치를 400으로 임의 설정
-    val bleCount = sensor.bleCount ?: 0
+    // 🔥 추가된 부분: "vs 01" 또는 "vs 02" 센서인 경우 카드 자체를 그리지 않고 제외합니다.
+    if (sensor.sensor == "vs 01" || sensor.sensor == "vs 02") {
+        return
+    }
 
-    // 2. 혼잡도 계산기 호출
-    val congestionLevel = CongestionAnalyzer.calculate(currentCo2, baseCo2, bleCount)
+    // 1. 필요한 데이터를 안전하게 가져오기 (null 처리)
+    val temp = sensor.temperature ?: 0.0
+    val humidity = sensor.humidity ?: 0.0
+
+    // 2. 바뀐 불쾌지수 분석기 호출
+    val congestionLevel = CongestionAnalyzer.analyze(temp, humidity)
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(120.dp) // 내용이 늘어났으니 높이를 살짝 키웁니다
+            .height(120.dp)
             .border(1.dp, Color.Gray)
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text("센서: ${sensor.sensor}")
-            Text("온도: ${sensor.temperature}°C")
-            Text("CO2: ${sensor.co2} ppm")
+            Text("온도: ${sensor.temperature ?: "- "}°C")
+            Text("습도: ${sensor.humidity ?: "- "}%")
         }
 
         // 3. 계산된 혼잡도 상태 표시
