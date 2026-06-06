@@ -62,7 +62,10 @@ data class SensorData(
     val longitude: Double? = 0.0,
     val fresh: Boolean? = false,
     val time: String? = "",
-    val savedAt: Timestamp? = null
+    val savedAt: Timestamp? = null,
+    // 아래 두 변수 추가 (Firebase 필드명과 일치해야 함)
+    val baseCo2: Long? = 400,
+    val bleCount: Int? = 0
 )
 
 class MainActivity : ComponentActivity() {
@@ -121,15 +124,30 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
+                            // ... (위쪽 코드 생략, GoogleMap 블록 끝난 직후 부분) ...
+
                             Column(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .verticalScroll(scrollState)
                             ) {
-                                sensorList.forEach { sensor ->
+                                // 1. 혼잡도 레벨을 기준으로 센서 리스트 정렬 (오름차순)
+                                val sortedSensors = sensorList.sortedBy { sensor ->
+                                    // 안전하게 데이터 가져오기 (이전 단계에서 SensorData에 추가한 변수 활용)
+                                    val currentCo2 = sensor.co2?.toInt() ?: 0
+                                    val baseCo2 = sensor.baseCo2?.toInt() ?: 400
+                                    val bleCount = sensor.bleCount ?: 0
+
+                                    // calculate()가 반환하는 Enum(RELAXED, NORMAL...)의 순번(0, 1, 2, 3)을 기준으로 정렬
+                                    CongestionAnalyzer.calculate(currentCo2, baseCo2, bleCount).ordinal
+                                }
+
+                                // 2. 정렬된 리스트를 바탕으로 RestPlaceCard 배치
+                                sortedSensors.forEach { sensor ->
                                     RestPlaceCard(sensor)
                                 }
                             }
+
                         }
 
                         // [레이어 2] 마커 클릭 시 나타나는 하단 팝업창
@@ -244,18 +262,40 @@ fun SensorDetailPopup(sensor: SensorData, onClose: () -> Unit) {
 
 @Composable
 fun RestPlaceCard(sensor: SensorData) {
+    // 1. 필요한 데이터를 안전하게 가져오기 (null 처리)
+    val currentCo2 = sensor.co2?.toInt() ?: 0
+    val baseCo2 = sensor.baseCo2?.toInt() ?: 400 // 기본 기준치를 400으로 임의 설정
+    val bleCount = sensor.bleCount ?: 0
+
+    // 2. 혼잡도 계산기 호출
+    val congestionLevel = CongestionAnalyzer.calculate(currentCo2, baseCo2, bleCount)
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(100.dp)
+            .height(120.dp) // 내용이 늘어났으니 높이를 살짝 키웁니다
             .border(1.dp, Color.Gray)
-            .padding(16.dp), // 내용물이 테두리에 너무 붙지 않게 패딩 추가
+            .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column {
+        Column(modifier = Modifier.weight(1f)) {
             Text("센서: ${sensor.sensor}")
-            Text("온도: ${sensor.temperature}")
-            Text("CO2: ${sensor.co2}")
+            Text("온도: ${sensor.temperature}°C")
+            Text("CO2: ${sensor.co2} ppm")
+        }
+
+        // 3. 계산된 혼잡도 상태 표시
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                text = congestionLevel.title,
+                fontWeight = FontWeight.Bold,
+                color = Color(android.graphics.Color.parseColor(congestionLevel.colorCode))
+            )
+            Text(
+                text = congestionLevel.message,
+                fontSize = 12.sp,
+                color = Color.Gray
+            )
         }
     }
 }
