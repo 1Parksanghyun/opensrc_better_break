@@ -33,7 +33,7 @@ object CongestionAnalyzer {
         // 🔥 요청하신 기존 반환 블록 완벽 유지 🔥
         return when (totalPoint) {
             0 -> CongestionLevel.RELAXED
-            1, 2 -> CongestionLevel.NORMAL
+            1 -> CongestionLevel.NORMAL
             3 -> CongestionLevel.CROWDED
             else -> CongestionLevel.VERY_CROWDED
         }

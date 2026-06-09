@@ -37,6 +37,8 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import com.google.android.gms.maps.CameraUpdateFactory
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,9 +61,13 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.random.Random
 import androidx.compose.foundation.clickable
-import androidx.compose.runtime.rememberCoroutineScope
-import com.google.android.gms.maps.CameraUpdateFactory
-import kotlinx.coroutines.launch
+
+// ── 기능 2·3: 센서 상태를 나타내는 Enum ───────────────────────────────────────────
+enum class SensorStatus {
+    NORMAL,         // 정상
+    DATA_ERROR,     // 이상 데이터 (범위 초과)
+    CONNECT_ERROR   // 연결 이상 (null 수신)
+}
 
 data class SensorData(
     val sensor: String? = "",
@@ -73,9 +79,17 @@ data class SensorData(
     val fresh: Boolean? = false,
     val time: String? = "",
     val savedAt: Timestamp? = null,
-    // 아래 두 변수 추가 (Firebase 필드명과 일치해야 함)
     val baseCo2: Long? = 400,
-    val bleCount: Int? = 0
+    val bleCount: Int? = 0,
+
+    // ── 기능 2·3: 센서 상태 필드 ────────────────────────────────────────────────
+    val status: SensorStatus = SensorStatus.NORMAL,
+
+    // ── 기능 2: 습도 100% 이상 지속 시간 카운터 (초) ────────────────────────────
+    val humidity100Seconds: Int = 0,
+
+    // ── 기능 4·5: 이번 갱신이 미세 변경인지 여부 ────────────────────────────────
+    val isMinorChange: Boolean = false
 )
 
 class MainActivity : ComponentActivity() {
@@ -83,7 +97,7 @@ class MainActivity : ComponentActivity() {
     private val db = FirebaseFirestore.getInstance()
     private val TAG = "firebase"
     private val sensorList = mutableStateListOf<SensorData>()
-    private var mockJob: Job? = null // 타이머 역할을 할 코루틴 Job
+    private var mockJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -91,18 +105,21 @@ class MainActivity : ComponentActivity() {
         load_sensordata()
 
         setContent {
-            // 🔥 선택된 센서를 기억하는 상태 변수
             var selectedSensor by remember { mutableStateOf<SensorData?>(null) }
 
             Opensrc_better_breakTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     val cbnu = LatLng(36.6300, 127.4551)
                     val scrollState = rememberScrollState()
+
+                    // 기능 1: cameraPositionState를 MapMarkerModule.ShowMarker 에 전달합니다
                     val cameraPositionState = rememberCameraPositionState {
                         position = CameraPosition.fromLatLngZoom(cbnu, 15f)
                     }
+                    // 마커 클릭 전 줌 레벨 저장 (빈 곳 클릭 시 이 값으로 원복)
+                    var savedZoom by remember { mutableStateOf(15f) }
+                    val mapScope = rememberCoroutineScope()
 
-                    // 🔥 Box로 전체를 감싸서 지도 위에 팝업이 뜰 수 있게 만듭니다.
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -118,60 +135,70 @@ class MainActivity : ComponentActivity() {
                                     .fillMaxWidth(0.9f)
                                     .fillMaxHeight(0.7f),
                                 cameraPositionState = cameraPositionState,
-                                onMapClick = { selectedSensor = null } // 지도 빈 곳 클릭 시 팝업 닫기
+                                onMapClick = {
+                                    // 빈 곳 클릭 → 팝업 닫기 + 저장된 줌으로 원복
+                                    selectedSensor = null
+                                    mapScope.launch {
+                                        cameraPositionState.animate(
+                                            CameraUpdateFactory.zoomTo(savedZoom),
+                                            durationMs = 500
+                                        )
+                                    }
+                                }
                             ) {
                                 sensorList.forEach { sensor ->
-                                    // 센서 리스트 갱신 시 마커가 깜빡이는 것을 방지하기 위해 key 부여
                                     key(sensor.sensor) {
+                                        // ── 기능 1: cameraPositionState 전달 ──────
                                         MapMarkerModule.ShowMarker(
                                             latitude = sensor.latitude,
                                             longitude = sensor.longitude,
                                             title = sensor.sensor,
-                                            onClick = {
-                                                selectedSensor = sensor // 마커 클릭 시 팝업 열기
+                                            cameraPositionState = cameraPositionState,
+                                            onMarkerClick = { zoom ->
+                                                savedZoom = zoom   // 클릭 전 줌 저장
+                                                selectedSensor = sensor
                                             }
                                         )
                                     }
                                 }
                             }
 
-                            // ... (위쪽 코드 생략) ...
                             Column(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .verticalScroll(scrollState)
                             ) {
-                                // 1. "pws 01"과 "pws 02" 센서 제외하고, 혼잡도 레벨 기준으로 정렬
                                 val displaySensors = sensorList
                                     .sortedBy { sensor ->
-                                        // 🔥 수정된 부분: CO2 대신 온도와 습도를 가져옵니다.
                                         val temp = sensor.temperature ?: 0.0
                                         val humidity = sensor.humidity ?: 0.0
-
-                                        // 🔥 수정된 부분: calculate 대신 새로운 analyze 함수를 호출합니다.
                                         CongestionAnalyzer.analyze(temp, humidity).ordinal
                                     }
 
-                                // 2. 필터링 및 정렬이 완료된 리스트를 바탕으로 RestPlaceCard 배치
                                 displaySensors.forEach { sensor ->
                                     RestPlaceCard(
                                         sensor = sensor,
                                         onClick = {
-                                            // 1. 마커를 클릭한 것과 동일하게 팝업창 상태 열기
-                                            selectedSensor = sensor
-
-                                            // 2. (선택 사항) 클릭한 카드의 센서 위치로 지도 카메라 자동 이동
                                             if (sensor.latitude != null && sensor.longitude != null) {
-                                                cameraPositionState.position = CameraPosition.fromLatLngZoom(
-                                                    LatLng(sensor.latitude, sensor.longitude),
-                                                    15f
-                                                )
+                                                // 마커 클릭과 동일한 효과: 현재 줌 저장 → 중심 이동 + 2단계 줌인
+                                                savedZoom = cameraPositionState.position.zoom
+                                                selectedSensor = sensor
+                                                val target = LatLng(sensor.latitude, sensor.longitude)
+                                                mapScope.launch {
+                                                    cameraPositionState.animate(
+                                                        CameraUpdateFactory.newLatLngZoom(target, savedZoom + 2f),
+                                                        durationMs = 400
+                                                    )
+                                                    cameraPositionState.animate(
+                                                        CameraUpdateFactory.zoomBy(2f),
+                                                        durationMs = 400
+                                                    )
+                                                }
                                             }
                                         }
                                     )
                                 }
                             }
-
                         }
 
                         // [레이어 2] 마커 클릭 시 나타나는 하단 팝업창
@@ -182,7 +209,7 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .padding(16.dp)
-                                .padding(bottom = 32.dp) // 리스트와 겹치지 않게 여백 추가
+                                .padding(bottom = 32.dp)
                         ) {
                             selectedSensor?.let { sensor ->
                                 SensorDetailPopup(
@@ -197,6 +224,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 데이터 시뮬레이션 + 기능 2·3·4·5·6 핵심 로직
+    // ─────────────────────────────────────────────────────────────────────────────
     private fun load_sensordata() {
         val fixedLocations = listOf(
             Triple("sensor 01", 36.626906, 127.457722),
@@ -235,7 +265,6 @@ class MainActivity : ComponentActivity() {
             Triple("sensor 34", 36.631461, 127.453407)
         )
 
-        // 2. 초기 앱 구동 시: 기본 랜덤 값 할당
         val baseSensors = fixedLocations.map { (name, lat, lng) ->
             SensorData(
                 sensor = name,
@@ -252,64 +281,236 @@ class MainActivity : ComponentActivity() {
 
         var internalState = baseSensors.toList()
 
-        val TEMP_THRESHOLD = 0.5
+        // ── 기능 5: 미세 변경 임계값 (이 값 미만이면 화면 업데이트 안 함) ─────────
+        val TEMP_THRESHOLD    = 0.5
         val HUMIDITY_THRESHOLD = 1.0
-        val CO2_THRESHOLD = 30
+        val CO2_THRESHOLD     = 30L
 
-        // 🔥 흐른 시간을 기록할 변수 추가
         var elapsedSeconds = 0
 
         mockJob?.cancel()
         mockJob = lifecycleScope.launch {
             while (isActive) {
-                delay(1000) // 1초 대기
-                elapsedSeconds++ // 1초마다 카운트 증가
+                delay(1000)
+                elapsedSeconds++
 
-                // A. 기본 미세 변동 (기존과 동일)
+                // ── A. 기능 4: 미세 변경 7 : 일반 변경 3 비율로 데이터 생성 ──────────
+                // 이상 상태인 센서(시나리오 주입 포함)는 랜덤 변동을 건너뜀 → 시나리오 값 보존
                 internalState = internalState.map { old ->
-                    val newTemp = (old.temperature ?: 25.0) + Random.nextDouble(-3.0, 3.0)
-                    val newHum = (old.humidity ?: 50.0) + Random.nextDouble(-10.0, 10.0)
+                    if (old.status == SensorStatus.DATA_ERROR || old.status == SensorStatus.CONNECT_ERROR) {
+                        return@map old
+                    }
+
+                    val isMinor = Random.nextFloat() < 0.7f
+
+                    val rawTemp: Double
+                    val rawHum:  Double
+                    val rawCo2:  Long
+
+                    if (isMinor) {
+                        rawTemp = (old.temperature ?: 25.0) + Random.nextDouble(-0.3, 0.3)
+                        rawHum  = (old.humidity    ?: 50.0) + Random.nextDouble(-0.5, 0.5)
+                        rawCo2  = (old.co2         ?: 400L) + Random.nextLong(-10, 10)
+                    } else {
+                        rawTemp = (old.temperature ?: 25.0) + Random.nextDouble(-3.0, 3.0)
+                        rawHum  = (old.humidity    ?: 50.0) + Random.nextDouble(-10.0, 10.0)
+                        rawCo2  = (old.co2         ?: 400L) + Random.nextLong(-100, 100)
+                    }
+
+                    // ★ 핵심 수정: 정상 운용 범위로 클램핑
+                    // → 랜덤 누적으로 이상값 범위에 빠지지 않음
+                    // → 이상 감지 조건(15/45°C, 15%/100%, 380/550ppm)보다 넉넉한 내부 범위 사용
                     old.copy(
-                        temperature = newTemp,
-                        humidity = newHum,
-                        co2 = (old.co2 ?: 400) + Random.nextLong(-100, 100)
+                        temperature   = rawTemp.coerceIn(18.0, 32.0),
+                        humidity      = rawHum.coerceIn(30.0, 80.0),
+                        co2           = rawCo2.coerceIn(390L, 540L),
+                        isMinorChange = isMinor
                     )
                 }
 
-                // B. 🔥 [시나리오 연출] 특정 시간에 특정 센서 값 강제 조작 🔥
-                // toMutableList()를 통해 리스트를 수정 가능하게 연 뒤, 원하는 인덱스의 값을 덮어씌웁니다.
+                // ── B. 기능 6: 시나리오 연출 ─────────────────────────────────────────
                 internalState = internalState.toMutableList().apply {
 
-                    // 시나리오 1: 앱 실행 20초 뒤, "sensor 03"의 센서의 값이 비상식적인 수치가 나타남
-                    if (elapsedSeconds == 20) {
+                    // ─ 시나리오 2-1 (기능 2 테스트): 15초 뒤 sensor 03 온도 이상값 주입
+                    //   기대 결과: 카드에 "온도 이상" 표시
+                    if (elapsedSeconds == 15) {
                         val idx = indexOfFirst { it.sensor == "sensor 03" }
-                        if (idx != -1) {
-                            this[idx] = this[idx].copy(
-                                temperature = 3500.0, // 온도 35도
-                                humidity = 90.0,    // 습도 90%
-                                co2 = 30000          // CO2 3000 ppm
-                            )
-                        }
+                        if (idx != -1) this[idx] = this[idx].copy(
+                            temperature   = 50.0,   // 45도 초과 → 이상
+                            humidity      = 55.0,
+                            co2           = 450,
+                            status        = SensorStatus.DATA_ERROR, // 섹션A 랜덤변동 차단
+                            isMinorChange = false
+                        )
+                        Log.d(TAG, "[시나리오] 15s: sensor 03 온도 이상값 주입 (50°C)")
                     }
 
+                    // ─ 시나리오 2-2 (기능 2 테스트): 25초 뒤 sensor 03 정상값 복구
+                    //   기대 결과: 카드가 정상 데이터로 업데이트됨
+                    if (elapsedSeconds == 25) {
+                        val idx = indexOfFirst { it.sensor == "sensor 03" }
+                        if (idx != -1) this[idx] = this[idx].copy(
+                            temperature   = 24.0,
+                            humidity      = 52.0,
+                            co2           = 430,
+                            status        = SensorStatus.NORMAL, // 이상 해제
+                            isMinorChange = false
+                        )
+                        Log.d(TAG, "[시나리오] 25s: sensor 03 정상값 복구")
+                    }
 
-                    // 필요한 시나리오가 있다면 여기에 계속 if문을 추가하시면 됩니다.
+                    // ─ 시나리오 2-3 (기능 2 테스트): 35초 뒤 sensor 05 CO2 이상값 주입
+                    //   기대 결과: 카드에 "데이터 이상" 표시
+                    if (elapsedSeconds == 35) {
+                        val idx = indexOfFirst { it.sensor == "sensor 05" }
+                        if (idx != -1) this[idx] = this[idx].copy(
+                            temperature   = 23.0,
+                            humidity      = 50.0,
+                            co2           = 600,    // 550 초과 → 이상
+                            status        = SensorStatus.DATA_ERROR, // 섹션A 랜덤변동 차단
+                            isMinorChange = false
+                        )
+                        Log.d(TAG, "[시나리오] 35s: sensor 05 CO2 이상값 주입 (600 ppm)")
+                    }
+
+                    // ─ 시나리오 2-4 (기능 2 테스트): 45초 뒤 sensor 05 CO2 정상 복구
+                    if (elapsedSeconds == 45) {
+                        val idx = indexOfFirst { it.sensor == "sensor 05" }
+                        if (idx != -1) this[idx] = this[idx].copy(
+                            co2           = 430,
+                            status        = SensorStatus.NORMAL, // 이상 해제
+                            isMinorChange = false
+                        )
+                        Log.d(TAG, "[시나리오] 45s: sensor 05 CO2 정상 복구")
+                    }
+
+                    // ─ 시나리오 3-1 (기능 3 테스트): 55초 뒤 sensor 07 null 주입
+                    //   기대 결과: 카드에 "연결 이상" 표시
+                    if (elapsedSeconds == 55) {
+                        val idx = indexOfFirst { it.sensor == "sensor 07" }
+                        if (idx != -1) this[idx] = this[idx].copy(
+                            temperature   = null,  // null → 연결 이상
+                            humidity      = null,
+                            co2           = null,
+                            status        = SensorStatus.CONNECT_ERROR, // 섹션A 랜덤변동 차단
+                            isMinorChange = false
+                        )
+                        Log.d(TAG, "[시나리오] 55s: sensor 07 null 주입 (연결 이상)")
+                    }
+
+                    // ─ 시나리오 3-2 (기능 3 테스트): 65초 뒤 sensor 07 정상 복구
+                    if (elapsedSeconds == 65) {
+                        val idx = indexOfFirst { it.sensor == "sensor 07" }
+                        if (idx != -1) this[idx] = this[idx].copy(
+                            temperature   = 22.0,
+                            humidity      = 48.0,
+                            co2           = 420,
+                            status        = SensorStatus.NORMAL, // 연결 이상 해제
+                            isMinorChange = false
+                        )
+                        Log.d(TAG, "[시나리오] 65s: sensor 07 정상 복구")
+                    }
+
+                    // ─ 시나리오 5-1 (기능 5 테스트): 75초 뒤 sensor 01에 미세 변경 강제 적용
+                    //   기대 결과: internalState는 변하지만 화면(sensorList)은 갱신되지 않음
+                    if (elapsedSeconds == 75) {
+                        val idx = indexOfFirst { it.sensor == "sensor 01" }
+                        if (idx != -1) this[idx] = this[idx].copy(
+                            temperature   = (this[idx].temperature ?: 25.0) + 0.1, // TEMP_THRESHOLD(0.5) 미만
+                            isMinorChange = true
+                        )
+                        Log.d(TAG, "[시나리오] 75s: sensor 01 미세 변경 강제 (화면 갱신 없어야 함)")
+                    }
+
+                    // ─ 시나리오 5-2 (기능 5 테스트): 80초 뒤 sensor 01에 일반 변경 적용
+                    //   기대 결과: 화면이 갱신됨
+                    if (elapsedSeconds == 80) {
+                        val idx = indexOfFirst { it.sensor == "sensor 01" }
+                        if (idx != -1) this[idx] = this[idx].copy(
+                            temperature   = (this[idx].temperature ?: 25.0) + 3.0,
+                            isMinorChange = false
+                        )
+                        Log.d(TAG, "[시나리오] 80s: sensor 01 일반 변경 (화면 갱신 있어야 함)")
+                    }
 
                 }.toList()
 
-                // C. 내부 데이터와 화면 데이터 비교 후 업데이트 (임계값 렉 방지 로직)
+                // ── C. 기능 2·3·4·5: 상태 판별 및 화면 업데이트 ─────────────────────
                 for (i in internalState.indices) {
-                    val internal = internalState[i]
+                    val raw       = internalState[i]
                     val displayed = sensorList[i]
 
-                    val tempDiff = Math.abs((internal.temperature ?: 0.0) - (displayed.temperature ?: 0.0))
-                    val humDiff = Math.abs((internal.humidity ?: 0.0) - (displayed.humidity ?: 0.0))
-                    val co2Diff = Math.abs((internal.co2 ?: 0L) - (displayed.co2 ?: 0L))
+                    // ── STEP 1: 기능 3 - null 체크로 현재 상태 결정 ──────────────────
+                    val hasNull = raw.temperature == null || raw.humidity == null || raw.co2 == null
+                    if (hasNull) {
+                        // null 수신 → 연결 이상 표시 (화면 값은 마지막 정상값 유지)
+                        if (displayed.status != SensorStatus.CONNECT_ERROR) {
+                            sensorList[i] = displayed.copy(status = SensorStatus.CONNECT_ERROR)
+                        }
+                        continue // 이번 사이클은 값 갱신 없이 상태만 유지
+                    }
 
-                    if (tempDiff >= TEMP_THRESHOLD || humDiff >= HUMIDITY_THRESHOLD || co2Diff >= CO2_THRESHOLD) {
-                        sensorList[i] = internal.copy(
-                            temperature = Math.round((internal.temperature ?: 0.0) * 10.0) / 10.0,
-                            humidity = Math.round((internal.humidity ?: 0.0) * 10.0) / 10.0
+                    // ── STEP 2: null 아님 → 실제 값 추출 ────────────────────────────
+                    val tempVal = raw.temperature!! // hasNull 통과했으므로 non-null 보장
+                    val humVal  = raw.humidity!!
+                    val co2Val  = raw.co2!!
+
+                    // ── STEP 3: 기능 2 - 범위 이상 여부 판별 ────────────────────────
+                    // 습도 100% 지속 카운터: internalState 기준으로 누적
+                    val prevHum100Sec = if (humVal >= 100.0) raw.humidity100Seconds else 0
+                    val newHum100Sec  = if (humVal >= 100.0) prevHum100Sec + 1 else 0
+
+                    val isDataError =
+                        tempVal < 15.0 || tempVal > 45.0 ||
+                                humVal  < 15.0 ||
+                                newHum100Sec >= 5 ||
+                                co2Val  < 380L || co2Val > 550L
+
+                    // internalState에 최신 카운터 반영 (상태 판별용)
+                    internalState = internalState.toMutableList().also { list ->
+                        list[i] = raw.copy(humidity100Seconds = newHum100Sec)
+                    }
+
+                    if (isDataError) {
+                        // 이상 데이터 → 화면 값은 마지막 정상값 유지, 상태 배너만 변경
+                        if (displayed.status != SensorStatus.DATA_ERROR) {
+                            sensorList[i] = displayed.copy(status = SensorStatus.DATA_ERROR)
+                        }
+                        continue // 이번 사이클은 값 갱신 없이 상태만 유지
+                    }
+
+                    // ── STEP 4: 여기까지 왔으면 현재 데이터는 "정상 범위" ────────────
+                    // 기능 5: 미세 변경이면 값은 갱신하지 않되, 혹시 이전에 이상 상태였다면
+                    //         정상 상태로만 복구해 준다.
+                    if (raw.isMinorChange) {
+                        if (displayed.status != SensorStatus.NORMAL) {
+                            // 이상 → 정상 복구: 현재 정상 값으로 화면 업데이트
+                            sensorList[i] = displayed.copy(
+                                temperature        = Math.round(tempVal * 10.0) / 10.0,
+                                humidity           = Math.round(humVal  * 10.0) / 10.0,
+                                co2                = co2Val,
+                                status             = SensorStatus.NORMAL,
+                                humidity100Seconds = newHum100Sec
+                            )
+                        }
+                        // 이미 정상 상태면 미세 변경이므로 화면 갱신 없이 그냥 통과
+                        continue
+                    }
+
+                    // ── STEP 5: 일반 변경 + 정상 범위 → 임계값 초과 시 화면 갱신 ────
+                    val tempDiff = Math.abs(tempVal - (displayed.temperature ?: 0.0))
+                    val humDiff  = Math.abs(humVal  - (displayed.humidity    ?: 0.0))
+                    val co2Diff  = Math.abs(co2Val  - (displayed.co2         ?: 0L).toDouble())
+
+                    if (tempDiff >= TEMP_THRESHOLD || humDiff >= HUMIDITY_THRESHOLD || co2Diff >= CO2_THRESHOLD
+                        || displayed.status != SensorStatus.NORMAL // 이상 상태에서 정상 복구 시 무조건 갱신
+                    ) {
+                        sensorList[i] = internalState[i].copy(
+                            temperature        = Math.round(tempVal * 10.0) / 10.0,
+                            humidity           = Math.round(humVal  * 10.0) / 10.0,
+                            co2                = co2Val,
+                            status             = SensorStatus.NORMAL,
+                            humidity100Seconds = newHum100Sec
                         )
                     }
                 }
@@ -318,13 +519,20 @@ class MainActivity : ComponentActivity() {
     }
 
 
-
-// -----------------------------------------------------
-// UI 컴포저블 모음
-// -----------------------------------------------------
+    // ─────────────────────────────────────────────────────────────────────────────
+    // UI 컴포저블
+    // ─────────────────────────────────────────────────────────────────────────────
 
     @Composable
     fun SensorDetailPopup(sensor: SensorData, onClose: () -> Unit) {
+
+        // 기능 2·3: 상태에 따른 배너 색상 및 문구
+        val (bannerColor, bannerText) = when (sensor.status) {
+            SensorStatus.CONNECT_ERROR -> Color(0xFFEF5350) to "⚠️ 연결 이상"
+            SensorStatus.DATA_ERROR    -> Color(0xFFFF9800) to "⚠️ 온도 이상"  // 넓게 "데이터 이상"으로 바꿔도 됩니다
+            SensorStatus.NORMAL        -> null to null
+        }
+
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
@@ -332,6 +540,24 @@ class MainActivity : ComponentActivity() {
             elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
+
+                // 상태 배너 (이상 시만 표시)
+                if (bannerColor != null && bannerText != null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(bannerColor, RoundedCornerShape(8.dp))
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = bannerText,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                    }
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -360,25 +586,26 @@ class MainActivity : ComponentActivity() {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(text = "온도", fontSize = 12.sp, color = Color.Gray)
                         Text(
-                            text = "${sensor.temperature ?: "- "}°C",
+                            text = if (sensor.status == SensorStatus.CONNECT_ERROR) "- °C"
+                            else "${sensor.temperature ?: "- "}°C",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
-
                     Column(modifier = Modifier.weight(1f)) {
                         Text(text = "습도", fontSize = 12.sp, color = Color.Gray)
                         Text(
-                            text = "${sensor.humidity ?: "- "}%",
+                            text = if (sensor.status == SensorStatus.CONNECT_ERROR) "- %"
+                            else "${sensor.humidity ?: "- "}%",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
-
                     Column(modifier = Modifier.weight(1f)) {
                         Text(text = "CO2", fontSize = 12.sp, color = Color.Gray)
                         Text(
-                            text = "${sensor.co2 ?: "- "} ppm",
+                            text = if (sensor.status == SensorStatus.CONNECT_ERROR) "- ppm"
+                            else "${sensor.co2 ?: "- "} ppm",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = if ((sensor.co2 ?: 0) > 1000) Color.Red else Color.Black
@@ -390,30 +617,44 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    fun RestPlaceCard(sensor: SensorData, onClick: () -> Unit) { // 🔥 onClick 매개변수 추가
-        // 1. 필요한 데이터를 안전하게 가져오기 (null 처리)
-        val temp = sensor.temperature ?: 0.0
+    fun RestPlaceCard(sensor: SensorData, onClick: () -> Unit) {
+        val temp     = sensor.temperature ?: 0.0
         val humidity = sensor.humidity ?: 0.0
-
-        // 2. 바뀐 불쾌지수 분석기 호출
         val congestionLevel = CongestionAnalyzer.analyze(temp, humidity)
+
+        // 기능 2·3: 상태 텍스트 및 색상 결정
+        val (statusText, statusColor) = when (sensor.status) {
+            SensorStatus.CONNECT_ERROR -> "연결 이상" to Color(0xFFEF5350)
+            SensorStatus.DATA_ERROR    -> "데이터 이상" to Color(0xFFFF9800)
+            SensorStatus.NORMAL        -> null to null
+        }
 
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(120.dp)
                 .border(1.dp, Color.Gray)
-                .clickable { onClick() } // 🔥 클릭 이벤트 추가 (padding 이전에 작성해야 전체 영역이 클릭됩니다)
+                .clickable { onClick() }
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text("센서: ${sensor.sensor}")
-                Text("온도: ${sensor.temperature ?: "- "}°C")
-                Text("습도: ${sensor.humidity ?: "- "}%")
+                if (statusText != null) {
+                    // 이상 상태: 기존 값 대신 상태 문구 표시
+                    Text(
+                        text = statusText,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = statusColor ?: Color.Red
+                    )
+                } else {
+                    Text("온도: ${sensor.temperature ?: "- "}°C")
+                    Text("습도: ${sensor.humidity ?: "- "}%")
+                }
             }
 
-            // 3. 계산된 혼잡도 상태 표시
+            // 혼잡도 (이상 상태여도 마지막으로 정상이었을 때 값 유지)
             Column(horizontalAlignment = Alignment.End) {
                 Text(
                     text = congestionLevel.title,
@@ -431,10 +672,7 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     fun Greeting(name: String, modifier: Modifier = Modifier) {
-        Text(
-            text = "Hello $name!",
-            modifier = modifier
-        )
+        Text(text = "Hello $name!", modifier = modifier)
     }
 
     @Preview(showBackground = true)
@@ -443,4 +681,5 @@ class MainActivity : ComponentActivity() {
         Opensrc_better_breakTheme {
             Greeting("Android")
         }
-    }}
+    }
+}
